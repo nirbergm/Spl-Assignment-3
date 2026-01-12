@@ -28,7 +28,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
                 processConnect(lines);
                 break;
             case "SEND":
-                processSend(lines);
+                processSend(message, lines);
                 break;
             case "SUBSCRIBE":
                 processSubscribe(lines);
@@ -82,16 +82,27 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
                 errorHeader = "Client already connected";
                 errorBody = "This connection is already associated with a user";
             }
-
-        
-            connections.send(connectionId, "ERROR\nmessage:" + errorHeader + "\n\n" + errorBody);
+            String reciept = getHeaderValue(lines, "reciept");
+            sendError(errorHeader, errorBody, reciept);
             shouldTerminate = true;
             connections.disconnect(connectionId);
-    }
+        }
     }
 
-    public void processSend(String[] lines) {
+    public void processSend(String message, String[] lines) {
+        String topic = getHeaderValue(lines, "destination");
+        String reciept = getHeaderValue(lines, "reciept");
+        if (currentUser == null) {
+            sendError("User not logged in", "You must perform login before sending messages.", reciept);
+            return; 
+        }
+        String[] parts = message.split("\n\n", 2);
 
+        String body = ""; // ברירת מחדל: גוף ריק
+        if (parts.length > 1) {
+            body = parts[1]; // האיבר השני הוא כל מה שבא אחרי השורה הריקה
+}
+        connections.send(topic, body);
     }
 
     public void processSubscribe(String[] lines) {
@@ -108,5 +119,17 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
 
     public boolean shouldTerminate() {
         return false;
+    }
+
+    private void sendError(String messageHeader, String errorBody, String recieptId) {
+        String errorFrame = "ERROR\n";
+        if (recieptId != null) {
+            errorFrame += "reciept-id:" + recieptId + "\n";
+        }
+        errorFrame += "message:" + messageHeader + "\n\n" + errorBody;
+        shouldTerminate = true;
+        connections.send(connectionId, errorFrame);
+        connections.disconnect(connectionId);
+
     }
 }
