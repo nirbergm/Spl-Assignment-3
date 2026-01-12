@@ -1,5 +1,9 @@
 package bgu.spl.net.api;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import javax.print.DocFlavor.STRING;
 
 import bgu.spl.net.impl.data.Database;
@@ -7,8 +11,11 @@ import bgu.spl.net.impl.data.LoginStatus;
 import bgu.spl.net.srv.Connections;
 
 public class StompMessagingProtocolImpl implements StompMessagingProtocol<String>{
+
     private int connectionId;
     private Connections<String> connections;
+    private Map<Integer, String> activeSubscriptions = new HashMap<>();
+    private static AtomicInteger messageIdCounter = new AtomicInteger(0);
     String currentUser;
     boolean shouldTerminate = false;
 
@@ -58,10 +65,11 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     }
 
     public void processConnect(String[] lines) {
+        String receipt = getHeaderValue(lines, "receipt");
         String login = getHeaderValue(lines, "login");
         String passcode = getHeaderValue(lines, "passcode");
         if (login == null || passcode == null) {
-            System.out.println("login or password inncorrect");
+            sendError("Malformed Frame", "Missing login or passcode header", receipt);
             return;
         }
         Database db = Database.getInstance();
@@ -82,35 +90,68 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
                 errorHeader = "Client already connected";
                 errorBody = "This connection is already associated with a user";
             }
-            String reciept = getHeaderValue(lines, "reciept");
-            sendError(errorHeader, errorBody, reciept);
-            shouldTerminate = true;
-            connections.disconnect(connectionId);
+            
+            sendError(errorHeader, errorBody, receipt);
         }
     }
 
     public void processSend(String message, String[] lines) {
-        String topic = getHeaderValue(lines, "destination");
-        String reciept = getHeaderValue(lines, "reciept");
+        String destination = getHeaderValue(lines, "destination");
+        String receipt = getHeaderValue(lines, "receipt");
         if (currentUser == null) {
-            sendError("User not logged in", "You must perform login before sending messages.", reciept);
+            sendError("User not logged in", "You must perform login before sending messages.", receipt);
             return; 
         }
+        if (destination == null) {
+            sendError("Malformed Frame", "Missing 'destination' header in SEND frame.", receipt);
+            return;
+        }
+        int msgId = messageIdCounter.incrementAndGet();
         String[] parts = message.split("\n\n", 2);
-
-        String body = ""; // ברירת מחדל: גוף ריק
+        String body = ""; 
         if (parts.length > 1) {
-            body = parts[1]; // האיבר השני הוא כל מה שבא אחרי השורה הריקה
-}
-        connections.send(topic, body);
+            body = parts[1]; 
+        }
+        if (!isSubscribed(destination)) {
+            sendError("Not subscribed", "You cannot send messages to a channel you are not subscribed to.", receipt);
+            return;
+        }
+        String messageFrame = "MESSAGE\n" +
+                              "destination:" + destination + "\n" +
+                              "message-id:" + msgId + "\n" + 
+                              "\n" +
+                              body;
+        connections.send(destination, messageFrame);
+        if (receipt != null) {
+            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+        }
+    }
+
+    public boolean isSubscribed(String destination){
+        return activeSubscriptions.containsValue(destination);
     }
 
     public void processSubscribe(String[] lines) {
-
+        String destination = getHeaderValue(lines, "destination");
+        String idStr = getHeaderValue(lines, "id");
+        String receipt = getHeaderValue(lines, "receipt");
+        if (destination == null || idStr == null) {
+            sendError("Malformed Frame", "Missing 'destination' or 'id' header", receipt);
+            return;
+        }
+        int subscriptionId;
+        try {
+            subscriptionId = Integer.parseInt(idStr);
+        } catch (NumberFormatException e) {
+            sendError("Malformed Frame", "The 'id' header must be a number", receipt);
+            return;
+        }
+        activeSubscriptions.put(subscriptionId, destination);
     }
 
     public void processUnsubscribe(String[] lines) {
-
+        String destination = getHeaderValue(lines, "destination");
+        activeSubscriptions.put(subscriptionId, destination);
     }
 
     public void processDisconnect(String[] lines) {
