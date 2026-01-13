@@ -197,6 +197,10 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
         Database.getInstance().logout(connectionId);
+        for (String channel : activeSubscriptions.values()) {
+            connections.unsubscribe(channel, connectionId);
+        }
+        activeSubscriptions.clear();
         connections.send(connectionId, "RECEIPT\nreceipt-id:" + receiptId + "\n\n");
         shouldTerminate = true; 
         connections.disconnect(connectionId);
