@@ -4,8 +4,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import javax.print.DocFlavor.STRING;
-
 import bgu.spl.net.impl.data.Database;
 import bgu.spl.net.impl.data.LoginStatus;
 import bgu.spl.net.srv.Connections;
@@ -78,8 +76,8 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             this.currentUser = login;
             connections.send(connectionId, "CONNECTED\nversion:1.2\n\n");
         } else {
-            String errorHeader = "";
-            String errorBody = "";
+            String errorHeader = "Unknown Error";
+            String errorBody = "Unknown Error";
             if (status == LoginStatus.WRONG_PASSWORD) {
                 errorHeader = "Wrong password";
                 errorBody = "Password does not match the username";
@@ -135,6 +133,10 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         String destination = getHeaderValue(lines, "destination");
         String idStr = getHeaderValue(lines, "id");
         String receipt = getHeaderValue(lines, "receipt");
+        if (currentUser == null) {
+            sendError("User not logged in", "You must perform login before subscribing.", receipt);
+            return;
+        }
         if (destination == null || idStr == null) {
             sendError("Malformed Frame", "Missing 'destination' or 'id' header", receipt);
             return;
@@ -147,25 +149,67 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
         activeSubscriptions.put(subscriptionId, destination);
+        connections.subscribe(destination, connectionId);
+        if (receipt != null) {
+            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+        }
     }
 
     public void processUnsubscribe(String[] lines) {
-        String destination = getHeaderValue(lines, "destination");
-        activeSubscriptions.put(subscriptionId, destination);
+        String idStr = getHeaderValue(lines, "id");
+        String receipt = getHeaderValue(lines, "receipt");
+        if (currentUser == null) {
+            sendError("User not logged in", "You must perform login before unsubscribing.", receipt);
+            return;
+        }
+        if (idStr == null) {
+            sendError("Malformed Frame", "Missing 'id' header", receipt);
+            return;
+        }
+        int subscriptionId;
+        try {
+            subscriptionId = Integer.parseInt(idStr);
+        } catch (NumberFormatException e) {
+            sendError("Malformed Frame", "The 'id' header must be a number", receipt);
+            return;
+        }
+        String channel = activeSubscriptions.remove(subscriptionId);
+        if (channel == null) {
+            sendError("Not Subscribed", "No subscription found with id " + subscriptionId, receipt);
+            return;
+        }
+        connections.unsubscribe(channel, connectionId);
+        if (receipt != null) {
+            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+        }
+
     }
 
     public void processDisconnect(String[] lines) {
+        String receiptId = getHeaderValue(lines, "receipt");
 
+        if (currentUser == null) {
+            sendError("User not logged in", "You cannot disconnect if you are not logged in", receiptId);
+            return;
+        }
+        if (receiptId == null) {
+            sendError("Malformed Frame", "Missing 'receipt' header in DISCONNECT frame", null);
+            return;
+        }
+        Database.getInstance().logout(connectionId);
+        connections.send(connectionId, "RECEIPT\nreceipt-id:" + receiptId + "\n\n");
+        shouldTerminate = true; 
+        connections.disconnect(connectionId);
     }
 
     public boolean shouldTerminate() {
-        return false;
+        return shouldTerminate;
     }
 
     private void sendError(String messageHeader, String errorBody, String recieptId) {
         String errorFrame = "ERROR\n";
         if (recieptId != null) {
-            errorFrame += "reciept-id:" + recieptId + "\n";
+            errorFrame += "receipt-id:" + recieptId + "\n";
         }
         errorFrame += "message:" + messageHeader + "\n\n" + errorBody;
         shouldTerminate = true;
