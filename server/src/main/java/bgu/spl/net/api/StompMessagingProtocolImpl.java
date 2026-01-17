@@ -12,6 +12,7 @@ import bgu.spl.net.srv.ConnectionsImpl;
 public class StompMessagingProtocolImpl implements StompMessagingProtocol<String> {
     private int connectionId;
     private ConnectionsImpl<String> connections;
+    private ConcurrentHashMap<String,String> subscriptionMap = new ConcurrentHashMap<>(); //subscriptionID : channel
     private boolean shouldTerminate;
     private String loggedInUser;
 
@@ -32,7 +33,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             case "CONNECT":
                 return processConnect(lines,message);
             case "SEND" :
-                return processSend(lines);
+                return processSend(lines,message);
             case "SUBSCRIBE":
                 return processSubscribe(lines);
             case "UNSUBSCRIBE":
@@ -98,7 +99,17 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     }
 
 
-    private String processSend(String[] lines){
+    private String processSend(String[] lines,String message){
+        String destination = getHeaderVal(lines, "destination");
+        String receipt = getHeaderVal(lines, "receipt");
+
+        if(subscriptionMap.containsValue(destination)){
+            
+
+            
+        }
+
+
         return null;
     }
     private String processSubscribe(String[] lines){
@@ -140,6 +151,10 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         sb.append('\n');
         sb.append("\u0000");
         return(sb.toString());
+    }
+
+    private String createMessageFrame(){
+        return null;
     }
 
 

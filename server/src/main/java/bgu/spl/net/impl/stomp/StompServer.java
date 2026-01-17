@@ -25,7 +25,7 @@ public class StompServer {
         ConcurrentHashMap<String,Integer> activeUsersMap = new ConcurrentHashMap<>();
 
 
-        Supplier<MessagingProtocol<String>> protocolFactory = () -> new StompMessagingProtocolImpl(usersMap,activeUsersMap);
+        Supplier<MessagingProtocol<String>> protocolFactory = () -> new StompMessagingProtocolImpl();
         Supplier<MessageEncoderDecoder<String>> encoderFactory = () -> new StompMessageEncoderDecoder();
 
         if(serverType == "tpc"){
