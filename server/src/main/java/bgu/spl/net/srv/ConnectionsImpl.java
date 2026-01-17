@@ -21,7 +21,10 @@ public class ConnectionsImpl <T> implements Connections <T> {
         ConcurrentLinkedQueue<Integer> subscribers = channels.get(channel);
         if (subscribers != null) {
             for (Integer connectionId : subscribers) {
-                send(connectionId, msg); 
+                boolean send = send(connectionId, msg);
+                if (!send) {
+                    subscribers.remove(connectionId);
+                } 
             }
         }
     }
