@@ -7,7 +7,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import bgu.spl.net.impl.data.Database;
 import bgu.spl.net.impl.data.LoginStatus;
 import bgu.spl.net.srv.Connections;
-import bgu.spl.net.srv.ConnectionsImpl;
 
 public class StompMessagingProtocolImpl implements StompMessagingProtocol<String>{
 
