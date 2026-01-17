@@ -3,6 +3,7 @@ package bgu.spl.net.api;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import bgu.spl.net.impl.data.Database;
 import bgu.spl.net.impl.data.LoginStatus;
@@ -15,6 +16,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     private ConcurrentHashMap<String,String> subscriptionMap = new ConcurrentHashMap<>(); //subscriptionID : channel
     private boolean shouldTerminate;
     private String loggedInUser;
+    private AtomicInteger messageIdCounter= new AtomicInteger(0);
 
     @Override
     public void start(int connectionId, Connections<String> connections) {
@@ -103,15 +105,39 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         String destination = getHeaderVal(lines, "destination");
         String receipt = getHeaderVal(lines, "receipt");
 
-        if(subscriptionMap.containsValue(destination)){
-            
-
-            
+        if (loggedInUser == null) {
+            return createErrorFrame(message, "User not logged in", "You must login before sending messages", receipt);
         }
 
+        if (destination == null) {
+            return createErrorFrame(message, "Malformed frame", "Missing destination header", receipt);
+        }
 
+        if (!subscriptionMap.containsValue(destination)) { //check if subscribed
+            return createErrorFrame(message, "Not subscribed", "You are not subscribed to channel: " + destination, receipt);
+        }
+
+        int bodyStartIndex = message.indexOf("\n\n");
+        String body = "";
+        if (bodyStartIndex != -1) {
+            body = message.substring(bodyStartIndex + 2);
+        }
+
+        int msgId = messageIdCounter.getAndIncrement();
+
+        String messageFrame = createMessageFrame(destination, msgId, body);
+
+        connections.send(destination, messageFrame);
+
+        if(receipt!= null){
+            return createReceiptFrame(receipt);
+        }
+        
         return null;
     }
+
+
+
     private String processSubscribe(String[] lines){
         return null;
     }
@@ -153,10 +179,26 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         return(sb.toString());
     }
 
-    private String createMessageFrame(){
-        return null;
+    private String createMessageFrame(String destination, int messageId, String body) {
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("MESSAGE").append('\n');
+        sb.append("destination:").append(destination).append('\n');
+        sb.append("message-id:").append(messageId).append('\n');
+        sb.append('\n');
+        sb.append(body);
+        sb.append("\u0000");
+        return sb.toString();
     }
 
+    private String createReceiptFrame(String receiptId) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("RECEIPT").append('\n');
+        sb.append("receipt-id:").append(receiptId).append('\n');
+        sb.append('\n');
+        sb.append("\u0000");
+        return sb.toString();
+    }
 
     @Override
     public boolean shouldTerminate() {
