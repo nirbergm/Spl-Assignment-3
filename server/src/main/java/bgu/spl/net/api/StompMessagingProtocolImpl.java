@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import bgu.spl.net.impl.data.Database;
 import bgu.spl.net.impl.data.LoginStatus;
 import bgu.spl.net.srv.Connections;
+import bgu.spl.net.srv.ConnectionsImpl;
 
 public class StompMessagingProtocolImpl implements StompMessagingProtocol<String>{
 
@@ -149,7 +150,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
         activeSubscriptions.put(subscriptionId, destination);
-        connections.subscribe(destination, connectionId);
+        connections.subscribe(destination, connectionId, subscriptionId);
         if (receipt != null) {
             connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
         }

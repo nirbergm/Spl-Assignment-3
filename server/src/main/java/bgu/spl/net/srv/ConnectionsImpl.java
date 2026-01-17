@@ -2,11 +2,12 @@ package bgu.spl.net.srv;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Map;
 
 public class ConnectionsImpl <T> implements Connections <T> {
     private final ConcurrentHashMap<Integer, ConnectionHandler<T>> activeConnections = new ConcurrentHashMap<>();
 
-    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<Integer>> channels = new ConcurrentHashMap<>();
+   ConcurrentHashMap<String, ConcurrentHashMap<Integer, Integer>> channels;
     
     public boolean send(int connectionId, T msg){
         ConnectionHandler<T> handler = activeConnections.get(connectionId);
@@ -18,13 +19,29 @@ public class ConnectionsImpl <T> implements Connections <T> {
     }
 
     public void send(String channel, T msg){
-        ConcurrentLinkedQueue<Integer> subscribers = channels.get(channel);
+      ConcurrentHashMap<Integer, Integer> subscribers = channels.get(channel);
+
         if (subscribers != null) {
-            for (Integer connectionId : subscribers) {
-                boolean send = send(connectionId, msg);
-                if (!send) {
-                    subscribers.remove(connectionId);
-                } 
+            // עוברים על כל המנויים (Key=User, Value=SubID)
+          for (Map.Entry<Integer, Integer> entry : subscribers.entrySet()) {
+                Integer connId = entry.getKey();
+                Integer subId = entry.getValue();
+
+                // 1. שכפול והתאמת ההודעה (רק אם זה String, שזה המצב ב-STOMP)
+                T msgToSend = msg;
+                if (msg instanceof String) {
+                    String originalMsg = (String) msg;
+                    // טריק: הוספת ה-Header אחרי ירידת השורה הראשונה (אחרי הפקודה MESSAGE)
+                    String modifiedMsg = originalMsg.replaceFirst("\n", "\nsubscription:" + subId + "\n");
+                    msgToSend = (T) modifiedMsg;
+                }
+
+                // 2. שליחה עם מנגנון Lazy Removal
+                boolean sent = send(connId, msgToSend);
+                if (!sent) {
+                    // המשתמש לא מחובר? נמחק אותו מהרשימה של הערוץ הזה
+                    subscribers.remove(connId);
+                }
             }
         }
     }
@@ -37,13 +54,13 @@ public class ConnectionsImpl <T> implements Connections <T> {
         activeConnections.put(connectionId, handler);
     }
 
-    public void subscribe(String channel, int connectionId) {
-        channels.putIfAbsent(channel, new ConcurrentLinkedQueue<>());
-        channels.get(channel).add(connectionId);
+    public void subscribe(String channel, int connectionId, int subscriptionId) {
+        channels.putIfAbsent(channel, new ConcurrentHashMap<>());
+        channels.get(channel).put(connectionId, subscriptionId);
     }
 
     public void unsubscribe(String channel, int connectionId) {
-        ConcurrentLinkedQueue<Integer> subscribers = channels.get(channel);
+        ConcurrentHashMap<Integer, Integer> subscribers = channels.get(channel);
         if (subscribers != null) {
             subscribers.remove(connectionId);
         }
