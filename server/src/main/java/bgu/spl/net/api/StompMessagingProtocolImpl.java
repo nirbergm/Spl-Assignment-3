@@ -1,11 +1,19 @@
 package bgu.spl.net.api;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import bgu.spl.net.impl.data.Database;
+import bgu.spl.net.impl.data.LoginStatus;
 import bgu.spl.net.srv.Connections;
 import bgu.spl.net.srv.ConnectionsImpl;
 
 public class StompMessagingProtocolImpl implements StompMessagingProtocol<String> {
-    public int connectionId;
-    public ConnectionsImpl<String> connections;
+    private int connectionId;
+    private ConnectionsImpl<String> connections;
+    private boolean shouldTerminate;
+    private String loggedInUser;
 
     @Override
     public void start(int connectionId, Connections<String> connections) {
@@ -15,14 +23,129 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
 
     @Override
     public String process(String message) {
+        String[] lines = message.split("\n");
+        if(lines.length == 0) return null;
+
+        String command = lines[0];
+        
+        switch (command) {
+            case "CONNECT":
+                return processConnect(lines,message);
+            case "SEND" :
+                return processSend(lines);
+            case "SUBSCRIBE":
+                return processSubscribe(lines);
+            case "UNSUBSCRIBE":
+                return processUnsubscribe(lines);
+            case "DISCONNECT":
+                return processDisConnect(lines);
+            default: System.out.println("Error: Unknown command " + command);
+                break;
+        }
+
+
+
         return null;
     }
-    @Override
-    public boolean shouldTerminate() {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'shouldTerminate'");
+    /**
+     * return HeaderName appropriate value.
+     **/
+    private String getHeaderVal(String[] lines, String HeaderName){ 
+
+        if(lines == null || HeaderName == null) throw new NullPointerException("paramters cant be null");
+
+        for(int i = 1; i < lines.length; i++){
+
+            if(lines[i].trim().isEmpty()) break;
+
+            int colonIndex = lines[i].indexOf(":"); //check colon index for sepreating key and value
+            if(colonIndex == -1) continue;
+            
+            String currHeaderName = lines[i].substring(0,colonIndex).trim();
+            if(HeaderName.equalsIgnoreCase(currHeaderName)){
+                return lines[i].substring(colonIndex + 1).trim(); //return the value of the right header
+            }
+        }
+        return null;
+    }
+
+    private String processConnect(String[] lines,String message){
+
+        String login = getHeaderVal(lines, "login");
+        String passcode = getHeaderVal(lines, "passcode");
+        String receiptId = getHeaderVal(lines, "receipt-id:");
+
+        LoginStatus status = Database.getInstance().login(connectionId, login, passcode);
+
+        switch (status) {
+            case ADDED_NEW_USER:
+            case LOGGED_IN_SUCCESSFULLY:
+                this.loggedInUser = login; 
+                return createConnectedFrame();
+
+            case WRONG_PASSWORD:
+                return createErrorFrame(message, "Wrong password", null, receiptId);
+
+            case ALREADY_LOGGED_IN:
+                return createErrorFrame(message, "User already logged in", null, receiptId);
+
+            case CLIENT_ALREADY_CONNECTED:
+                return createErrorFrame(message, "The client is already logged in, log out before trying again", null, receiptId);
+                
+            default:
+                return null;
+        }
     }
 
 
+    private String processSend(String[] lines){
+        return null;
+    }
+    private String processSubscribe(String[] lines){
+        return null;
+    }
+    private String processUnsubscribe(String[] lines){
+        return null;
+    }
+    private String processDisConnect(String[] lines){
+        return null;
+    }
+
+
+    private String createErrorFrame(String message,String shortErrorMessage,String fullErrorMessage, String recieptID){
+        StringBuilder sb = new StringBuilder();
+        sb.append("ERROR").append('\n');
+
+        if(recieptID != null){
+            sb.append("receipt-id: " + recieptID).append('\n');
+        }
+        sb.append("message: ");
+        sb.append(shortErrorMessage).append('\n');
+        sb.append('\n');
+        sb.append("The message:" + '\n' + "------" + '\n');
+        sb.append(message).append('\n');
+        sb.append('\n');
+        sb.append("------" + '\n');
+        if(fullErrorMessage != null){
+            sb.append(fullErrorMessage).append('\n');
+        }
+        sb.append("\u0000");
+        return sb.toString();
+    }
+
+    private String createConnectedFrame(){
+        StringBuilder sb = new StringBuilder();
+        sb.append("CONNECTED").append('\n');
+        sb.append("version:1.2").append('\n');
+        sb.append('\n');
+        sb.append("\u0000");
+        return(sb.toString());
+    }
+
+
+    @Override
+    public boolean shouldTerminate() {
+        return shouldTerminate;
+    }
     
 }
