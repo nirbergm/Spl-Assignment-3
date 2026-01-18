@@ -49,7 +49,10 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
                     while (buf.hasRemaining()) {
                         T nextMessage = encdec.decodeNextByte(buf.get());
                         if (nextMessage != null) {
-                            protocol.process(nextMessage);
+                            T response = protocol.process(nextMessage);
+                            if (response != null) {
+                                send(response);
+                            }
                         }
                     }
                 } finally {

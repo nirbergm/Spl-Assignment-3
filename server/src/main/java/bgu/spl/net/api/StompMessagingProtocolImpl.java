@@ -37,11 +37,11 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             case "SEND" :
                 return processSend(lines,message);
             case "SUBSCRIBE":
-                return processSubscribe(lines);
+                return processSubscribe(lines,message);
             case "UNSUBSCRIBE":
-                return processUnsubscribe(lines);
+                return processUnsubscribe(lines, message);
             case "DISCONNECT":
-                return processDisConnect(lines);
+                return processDisConnect(lines,message);
             default: System.out.println("Error: Unknown command " + command);
                 break;
         }
@@ -132,23 +132,84 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         if(receipt!= null){
             return createReceiptFrame(receipt);
         }
+
+        return null;
+    }
+
+
+
+    private String processSubscribe(String[] lines,String message){
+        String destination = getHeaderVal(lines, "destination");
+        String receipt = getHeaderVal(lines, "receipt");
+        String id = getHeaderVal(lines, "id");
+
+        if (loggedInUser == null) {
+            return createErrorFrame(message, "User not logged in", "You must login before sending messages", receipt);
+        }
+
+        if (destination == null) {
+            return createErrorFrame(message, "Malformed frame", "Missing destination header", receipt);
+        }
+
+        if(id == null){
+            return createErrorFrame(message, "User didnt send id to make this subscription",null,receipt);
+        }
         
+        subscriptionMap.putIfAbsent(id, destination);
+        connections.subscribe(connectionId, destination);
+
+        if(receipt != null) return createReceiptFrame(receipt);
+
         return null;
     }
 
 
+    private String processUnsubscribe(String[] lines,String message){
 
-    private String processSubscribe(String[] lines){
+        String receipt = getHeaderVal(lines, "receipt");
+        String id = getHeaderVal(lines, "id");
+
+        if (loggedInUser == null) {
+            return createErrorFrame(message, "User not logged in", "You must login before sending messages", receipt);
+        }
+
+        if(id == null){
+            return createErrorFrame(message, "User didnt send id to identify this subscription",null,receipt);
+        }
+        if(!subscriptionMap.containsKey(id)){
+            return createErrorFrame(message,"There is no suitable id subscribed",null,receipt);
+        }
+
+        String channel = subscriptionMap.remove(id);//get the channel we want to remove from
+
+        connections.unSubscribe(connectionId,channel);
+
+        if(receipt != null){
+            return createReceiptFrame(receipt);
+        }
         return null;
     }
-    private String processUnsubscribe(String[] lines){
-        return null;
-    }
-    private String processDisConnect(String[] lines){
-        return null;
+
+    private String processDisConnect(String[] lines,String message){
+
+        String receiptId = getHeaderVal(lines, "receipt");
+
+        if ( loggedInUser == null) {
+            return createErrorFrame(message,"User not logged in", "You cannot disconnect if you are not logged in",receiptId);
+        }
+
+        if (receiptId == null) {
+            return createErrorFrame(message,"Malformed Frame", "Missing 'receipt' header in DISCONNECT frame", receiptId);
+        }
+        connections.disconnect(connectionId);
+        Database.getInstance().logout(connectionId);
+        
+        shouldTerminate = true;        
+        return createReceiptFrame(receiptId);
+
     }
 
-
+    //Auxilary functions for creating frames
     private String createErrorFrame(String message,String shortErrorMessage,String fullErrorMessage, String recieptID){
         StringBuilder sb = new StringBuilder();
         sb.append("ERROR").append('\n');
