@@ -30,15 +30,87 @@ def recv_null_terminated(sock: socket.socket) -> str:
 
 
 def init_database():
-    pass
+    """
+    יוצר את הטבלאות הנדרשות אם הן לא קיימות
+    """
+    print(f"[{SERVER_NAME}] Initializing database...")
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        
+        # 1. טבלת משתמשים
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                password TEXT NOT NULL
+            )
+        ''')
+
+        # 2. טבלת התחברויות (עונה לדרישה על Login/Logout timestamps)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS logins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                login_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                logout_time DATETIME,
+                FOREIGN KEY(username) REFERENCES users(username)
+            )
+        ''')
+
+        # 3. טבלת קבצים (עונה לדרישה על File tracking)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(username) REFERENCES users(username)
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[{SERVER_NAME}] Error initializing DB: {e}")
 
 
 def execute_sql_command(sql_command: str) -> str:
-    return "done"
+    """
+    מבצע פקודות שינוי (INSERT, UPDATE, DELETE)
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(sql_command)
+        conn.commit()
+        conn.close()
+        return "done"
+    except sqlite3.Error as e:
+        print(f"SQL Command Error: {e}")
+        return f"ERROR: {e}"
 
 
 def execute_sql_query(sql_query: str) -> str:
-    return "done"
+    """
+    מבצע שאילתות שליפה (SELECT) ומחזיר מחרוזת מפורמטת
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(sql_query)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # המרת התוצאות למחרוזת:
+        # כל שורה מופרדת ב-\n
+        # כל עמודה בשורה מופרדת ב-|
+        # דוגמה: "shachar|pass\nmoshe|1234"
+        result_str = "\n".join(["|".join(map(str, row)) for row in rows])
+        return result_str
+        
+    except sqlite3.Error as e:
+        print(f"SQL Query Error: {e}")
+        return f"ERROR: {e}"
 
 
 def handle_client(client_socket: socket.socket, addr):
@@ -66,6 +138,8 @@ def handle_client(client_socket: socket.socket, addr):
 
 
 def start_server(host="127.0.0.1", port=7778):
+    init_database()
+
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 

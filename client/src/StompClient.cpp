@@ -10,18 +10,16 @@
 
 using namespace std;
 
-// --- תחילת מחלקת StompProtocol (מוגדרת כאן כדי למנוע שינוי makefile) ---
+// --- תחילת מחלקת StompProtocol ---
 
 class StompProtocol {
 private:
     int subscriptionIdCounter;
     int receiptIdCounter;
     
-    // מיפויים לניהול מצב
     std::map<std::string, int> topicToSubId; 
     std::map<int, std::string> receiptIdToAction;
 
-    // פונקציות עזר ליצירת פריימים
     string createConnectFrame(const string& host, const string& login, const string& passcode) {
         return "CONNECT\naccept-version:1.2\nhost:" + host + "\nlogin:" + login + "\npasscode:" + passcode + "\n\n";
     }
@@ -45,7 +43,6 @@ private:
 public:
     StompProtocol() : subscriptionIdCounter(0), receiptIdCounter(0), topicToSubId(), receiptIdToAction() {}
 
-    // עיבוד קלט מהמקלדת
     vector<string> processFromKeyboard(const std::string& input, ConnectionHandler* connectionHandler, bool isConnected) {
         vector<string> framesToSend;
         stringstream ss(input);
@@ -55,10 +52,6 @@ public:
         if (command == "login") {
             string hostPort, username, password;
             ss >> hostPort >> username >> password;
-            if (isConnected) {
-                cout << "The client is already logged in, log out before trying again" << endl;
-                return framesToSend;
-            }
             framesToSend.push_back(createConnectFrame(hostPort, username, password));
         }
         else if (command == "join") {
@@ -95,24 +88,32 @@ public:
         else if (command == "report") {
             string file_path;
             ss >> file_path;
-            names_and_events data = parseEventsFile(file_path); // שימוש ב-event.cpp הקיים
+            names_and_events data = parseEventsFile(file_path);
             for (const Event& event : data.events) {
                 string game_name = data.team_a_name + "_" + data.team_b_name;
                 if (topicToSubId.count(game_name)) {
-                    // בניית גוף ההודעה
                     string body = "user:" + data.team_a_name + "\n" + 
                                   "team a:" + data.team_a_name + "\n" + 
                                   "team b:" + data.team_b_name + "\n" + 
                                   "event name:" + event.get_name() + "\n" + 
                                   "time:" + to_string(event.get_time()) + "\n" + 
                                   "general game updates:\n";
-                    for (auto const& [key, val] : event.get_game_updates()) body += key + ":" + val + "\n";
-                    body += "team a updates:\n";
-                    for (auto const& [key, val] : event.get_team_a_updates()) body += key + ":" + val + "\n";
-                    body += "team b updates:\n";
-                    for (auto const& [key, val] : event.get_team_b_updates()) body += key + ":" + val + "\n";
-                    body += "description:\n" + event.get_discription();
                     
+                    // --- התיקון ל-C++11 כאן ---
+                    for (auto const& pair : event.get_game_updates()) {
+                        body += pair.first + ":" + pair.second + "\n";
+                    }
+                    body += "team a updates:\n";
+                    for (auto const& pair : event.get_team_a_updates()) {
+                        body += pair.first + ":" + pair.second + "\n";
+                    }
+                    body += "team b updates:\n";
+                    for (auto const& pair : event.get_team_b_updates()) {
+                        body += pair.first + ":" + pair.second + "\n";
+                    }
+                    // ---------------------------
+
+                    body += "description:\n" + event.get_discription();
                     framesToSend.push_back(createSendFrame(game_name, body));
                 }
             }
@@ -120,8 +121,6 @@ public:
         return framesToSend;
     }
 
-    // עיבוד הודעות מהשרת
-    // מחזירה false אם צריך לנתק את הסוקט
     bool processFromServer(const std::string& frame) {
         stringstream ss(frame);
         string command;
@@ -132,7 +131,7 @@ public:
         }
         else if (command == "ERROR") {
             cout << frame << endl;
-            return false; // שגיאה קריטית סוגרת חיבור
+            return false;
         }
         else if (command == "MESSAGE") {
             size_t bodyPos = frame.find("\n\n");
@@ -149,7 +148,7 @@ public:
                     int id = stoi(idStr);
                     if (receiptIdToAction.count(id)) {
                         string action = receiptIdToAction[id];
-                        if (action == "DISCONNECT") return false; // ניתוק מסודר
+                        if (action == "DISCONNECT") return false;
                         cout << action << endl;
                         receiptIdToAction.erase(id);
                     }
@@ -159,9 +158,6 @@ public:
         return true;
     }
 };
-
-// --- סוף מחלקת StompProtocol ---
-
 
 volatile bool shouldTerminate = false;
 
@@ -223,7 +219,6 @@ int main(int argc, char *argv[]) {
             listenerThread = new thread(socketListener, connectionHandler, ref(protocol));
         }
 
-        // שליחת הפקודה לפרוטוקול
         vector<string> frames = protocol.processFromKeyboard(line, connectionHandler, connectionHandler != nullptr);
 
         for (const string& frame : frames) {
