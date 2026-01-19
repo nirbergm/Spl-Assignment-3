@@ -13,7 +13,7 @@ public class StompServer {
 
     public static void main(String[] args) {
         if (args.length < 2) { 
-            System.out.println("didnt insert enough variables");
+            System.out.println("Error: Usage: StompServer <port> <tpc/reactor>");
             return;
         }
         
@@ -28,15 +28,18 @@ public class StompServer {
         Supplier<MessagingProtocol<String>> protocolFactory = () -> new StompMessagingProtocolImpl();
         Supplier<MessageEncoderDecoder<String>> encoderFactory = () -> new StompMessageEncoderDecoder();
 
-        if(serverType == "tpc"){
+        if(serverType.equals("tpc")){
             Server.<String>threadPerClient(port,
                  protocolFactory,
                   encoderFactory).serve();
         }
-        else if(serverType == "reactor"){
+        else if(serverType.equals( "reactor")){
             Server.<String>reactor(nthreads, port,
                 protocolFactory,
                 encoderFactory).serve();
+        }
+        else {
+            System.out.println("Error: Unknown server mode. Use 'tpc' or 'reactor'.");
         }
     }
 }
