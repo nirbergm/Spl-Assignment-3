@@ -20,12 +20,13 @@ public interface Server<T> extends Closeable {
      * @param <T> The Message Object for the protocol
      * @return A new Thread per client server
      */
-    public static <T> Server<T>  threadPerClient(
+   static <T> Server<T> threadPerClient(
             int port,
-            Supplier<MessagingProtocol<T> > protocolFactory,
-            Supplier<MessageEncoderDecoder<T> > encoderDecoderFactory) {
+            Supplier<MessagingProtocol<T>> protocolFactory,
+            Supplier<MessageEncoderDecoder<T>> encoderDecoderFactory,
+            Connections<T> connections) {
 
-        return new BaseServer<T>(port, protocolFactory, encoderDecoderFactory) {
+        return new BaseServer<T>(port, protocolFactory, encoderDecoderFactory, connections) {
             @Override
             protected void execute(BlockingConnectionHandler<T>  handler) {
                 new Thread(handler).start();
@@ -47,8 +48,9 @@ public interface Server<T> extends Closeable {
             int nthreads,
             int port,
             Supplier<MessagingProtocol<T>> protocolFactory,
-            Supplier<MessageEncoderDecoder<T>> encoderDecoderFactory) {
-        return new Reactor<T>(nthreads, port, protocolFactory, encoderDecoderFactory);
+            Supplier<MessageEncoderDecoder<T>> encoderDecoderFactory,
+            Connections<T> connections) {
+        return new Reactor<T>(nthreads, port, protocolFactory, encoderDecoderFactory, connections);
     }
 
 }
