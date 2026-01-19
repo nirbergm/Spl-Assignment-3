@@ -2,6 +2,8 @@ package bgu.spl.net.srv;
 
 import bgu.spl.net.api.MessageEncoderDecoder;
 import bgu.spl.net.api.MessagingProtocol;
+import bgu.spl.net.api.StompMessagingProtocol;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.channels.ClosedSelectorException;
@@ -24,22 +26,19 @@ public class Reactor<T> implements Server<T> {
     private Thread selectorThread;
     private final ConcurrentLinkedQueue<Runnable> selectorTasks = new ConcurrentLinkedQueue<>();
 
-    private final Connections<T> connections;
-    private final AtomicInteger connectionIdCounter;
+    private final ConnectionsImpl<T> connections = new ConnectionsImpl<>();
+    private final AtomicInteger idCounter = new AtomicInteger(0);
 
     public Reactor(
             int numThreads,
             int port,
             Supplier<MessagingProtocol<T>> protocolFactory,
-            Supplier<MessageEncoderDecoder<T>> readerFactory,
-            Connections<T> connections){
+            Supplier<MessageEncoderDecoder<T>> readerFactory){
 
         this.pool = new ActorThreadPool(numThreads);
         this.port = port;
         this.protocolFactory = protocolFactory;
         this.readerFactory = readerFactory;
-        this.connections = connections;
-        this.connectionIdCounter = new AtomicInteger(0);
     }
 
     @Override
@@ -103,15 +102,20 @@ public class Reactor<T> implements Server<T> {
         SocketChannel clientChan = serverChan.accept();
         clientChan.configureBlocking(false);
 
-        int connectionId = connectionIdCounter.incrementAndGet();
+        MessagingProtocol<T> protocol = protocolFactory.get();
+
+        int connectionId = idCounter.incrementAndGet();
 
         final NonBlockingConnectionHandler<T> handler = new NonBlockingConnectionHandler<>(
                 readerFactory.get(),
-                protocolFactory.get(),
+                protocol,
                 clientChan,
-                this,
-                connectionId,
-                connections);
+                this);
+        handler.initialize(connectionId, connections);
+        connections.addConnection(connectionId, handler);
+        if (protocol instanceof StompMessagingProtocol) {
+            ((StompMessagingProtocol<T>) protocol).start(connectionId, connections);
+        }
         clientChan.register(selector, SelectionKey.OP_READ, handler);
     }
 

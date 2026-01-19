@@ -6,8 +6,7 @@ import java.util.Map;
 
 public class ConnectionsImpl <T> implements Connections <T> {
     private final ConcurrentHashMap<Integer, ConnectionHandler<T>> activeConnections = new ConcurrentHashMap<>();
-
-   ConcurrentHashMap<String, ConcurrentHashMap<Integer, Integer>> channels;
+    private final ConcurrentHashMap<String, ConcurrentHashMap<Integer, Integer>> channels = new ConcurrentHashMap<>();
     
     public boolean send(int connectionId, T msg){
         ConnectionHandler<T> handler = activeConnections.get(connectionId);

@@ -17,13 +17,16 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
     private BufferedInputStream in;
     private BufferedOutputStream out;
     private volatile boolean connected = true;
-    private final int connectionId;
-    private final Connections<T> connections;
+    private int connectionId;
+    private Connections<T> connections;
 
-    public BlockingConnectionHandler(Socket sock, MessageEncoderDecoder<T> reader, MessagingProtocol<T> protocol, int connectionId, Connections<T> connections) {
+    public BlockingConnectionHandler(Socket sock, MessageEncoderDecoder<T> reader, MessagingProtocol<T> protocol) {
         this.sock = sock;
         this.encdec = reader;
         this.protocol = protocol;
+    }
+
+    public void initialize(int connectionId, Connections<T> connections) {
         this.connectionId = connectionId;
         this.connections = connections;
     }
@@ -35,11 +38,7 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
 
             in = new BufferedInputStream(sock.getInputStream());
             out = new BufferedOutputStream(sock.getOutputStream());
-            if (protocol instanceof StompMessagingProtocol) {
-                ((StompMessagingProtocol<T>) protocol).start(connectionId, connections);
-            }
-            // רישום ה-Handler ב-Connections
-            connections.addConnection(connectionId, this);
+          
             while (!protocol.shouldTerminate() && connected && (read = in.read()) >= 0) {
                 T nextMessage = encdec.decodeNextByte((byte) read);
                 if (nextMessage != null) {
@@ -54,7 +53,12 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
             ex.printStackTrace();
         }
         finally {
-            connections.disconnect(connectionId);
+            if (connections != null) {
+                connections.disconnect(connectionId);
+            }
+            try {
+                close();
+            } catch (IOException ignored) {}
         }
 
     }
@@ -62,7 +66,6 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
     @Override
     public void close() throws IOException {
         connected = false;
-        connections.disconnect(connectionId);
         sock.close();
     }
 
@@ -70,7 +73,7 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
     public void send(T msg) {
         try {
             if (msg != null) {
-                synchronized (out) { 
+                synchronized (out) {
                     out.write(encdec.encode(msg));
                     out.flush();
                 }

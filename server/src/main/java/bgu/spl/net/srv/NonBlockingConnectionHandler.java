@@ -22,21 +22,22 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
     private final SocketChannel chan;
     private final Reactor reactor;
 
-    private final int connectionId;
-    private final Connections<T> connections;
+    private int connectionId;
+    private Connections<T> connections;
     private boolean initialized = false;
 
     public NonBlockingConnectionHandler(
            MessageEncoderDecoder<T> reader,
             MessagingProtocol<T> protocol,
             SocketChannel chan,
-            Reactor reactor,
-            int connectionId,       
-            Connections<T> connections) {
+            Reactor reactor) {
         this.chan = chan;
         this.encdec = reader;
         this.protocol = protocol;
         this.reactor = reactor;
+    }
+
+    public void initialize(int connectionId, Connections<T> connections) {
         this.connectionId = connectionId;
         this.connections = connections;
     }
@@ -55,12 +56,11 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
             buf.flip();
             return () -> {
                 try {
-                    if (!initialized) {
+               if (!initialized && connections != null) {
                         initialized = true;
                         if (protocol instanceof StompMessagingProtocol) {
                             ((StompMessagingProtocol<T>) protocol).start(connectionId, connections);
                         }
-                        connections.addConnection(connectionId, this);
                     }
                     while (buf.hasRemaining()) {
                         T nextMessage = encdec.decodeNextByte(buf.get());
@@ -85,7 +85,9 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
 
     public void close() {
         try {
-            connections.disconnect(connectionId);
+            if (connections != null) {
+                connections.disconnect(connectionId);
+            }
             chan.close();
         } catch (IOException ex) {
             ex.printStackTrace();
@@ -135,9 +137,7 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
     @Override
     public void send(T msg) {
         if (msg != null) {
-            // 1. הוספה לתור הכתיבה
             writeQueue.add(ByteBuffer.wrap(encdec.encode(msg)));
-            // 2. הערת ה-Reactor שיש משהו לכתוב (OP_WRITE)
             reactor.updateInterestedOps(chan, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
         }
     }

@@ -2,6 +2,8 @@ package bgu.spl.net.srv;
 
 import bgu.spl.net.api.MessageEncoderDecoder;
 import bgu.spl.net.api.MessagingProtocol;
+import bgu.spl.net.api.StompMessagingProtocol;
+
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -14,23 +16,19 @@ public abstract class BaseServer<T> implements Server<T> {
     private final Supplier<MessagingProtocol<T>> protocolFactory;
     private final Supplier<MessageEncoderDecoder<T>> encdecFactory;
     private ServerSocket sock;
-    private final Connections<T> connections;
-    private final AtomicInteger connectionIdCounter;
+    private final ConnectionsImpl<T> connections = new ConnectionsImpl<>();
+    private final AtomicInteger idCounter = new AtomicInteger(0);
 
     public BaseServer(
       int port,
             Supplier<MessagingProtocol<T>> protocolFactory,
-            Supplier<MessageEncoderDecoder<T>> encdecFactory,
-            Connections<T> connections) { // הבנאי מקבל כעת connections
+            Supplier<MessageEncoderDecoder<T>> encdecFactory) { 
 
         this.port = port;
         this.protocolFactory = protocolFactory;
         this.encdecFactory = encdecFactory;
         this.sock = null;
         
-        // שמירת ה-connections ואתחול המונה
-        this.connections = connections;
-        this.connectionIdCounter = new AtomicInteger(0);
     }
 
     @Override
@@ -44,14 +42,21 @@ public abstract class BaseServer<T> implements Server<T> {
             while (!Thread.currentThread().isInterrupted()) {
 
                 Socket clientSock = serverSock.accept();
-                int connectionId = connectionIdCounter.incrementAndGet();
+
+                MessagingProtocol<T> protocol = protocolFactory.get();
+
+                int connectionId = idCounter.incrementAndGet();
+
                 BlockingConnectionHandler<T> handler = new BlockingConnectionHandler<>(
                         clientSock,
                         encdecFactory.get(),
-                        protocolFactory.get(),
-                        connectionId,
-                        connections);
+                        protocol);
+               handler.initialize(connectionId, connections);
+               connections.addConnection(connectionId, handler);
 
+                if (protocol instanceof StompMessagingProtocol) {
+                    ((StompMessagingProtocol<T>) protocol).start(connectionId, connections);
+                }
                 execute(handler);
             }
         } catch (IOException ex) {
