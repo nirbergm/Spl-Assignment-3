@@ -7,7 +7,7 @@ import java.net.Socket;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Database {
-
+    // מפה שמחזיקה רק את המשתמשים המחוברים כרגע (Active Sessions)
     private final ConcurrentHashMap<Integer, String> connectionsIdMap;
     
     private final String sqlHost;
@@ -19,7 +19,6 @@ public class Database {
 
     private Database() {
         connectionsIdMap = new ConcurrentHashMap<>();
-        // פרטי החיבור לשרת הפייתון
         this.sqlHost = "127.0.0.1";
         this.sqlPort = 7778;
     }
@@ -45,7 +44,6 @@ public class Database {
                 if (ch == '\0') break;
                 response.append((char) ch);
             }
-            
             return response.toString();
             
         } catch (Exception e) {
@@ -55,43 +53,53 @@ public class Database {
     }
 
     /**
-     * בדיקת לוגין מלאה מול ה-SQL
+     * בדיקת לוגין מלאה מול ה-SQL עם החזרת LoginStatus
      */
-    public boolean login(int connectionId, String username, String password) {
-        // 1. בדיקה אם הקליינט הזה כבר מחובר
+    public LoginStatus login(int connectionId, String username, String password) {
+        // 1. בדיקה אם הלקוח הספציפי הזה (Connection Handler) כבר מחובר
         if (connectionsIdMap.containsKey(connectionId)) {
-            return false; // Already connected
+            return LoginStatus.CLIENT_ALREADY_CONNECTED;
         }
 
-        // 2. בדיקה אם המשתמש כבר מחובר ממקום אחר (אופציונלי, תלוי דרישות)
+        // 2. בדיקה אם המשתמש כבר מחובר ממקום אחר (למניעת כניסה כפולה)
         if (connectionsIdMap.containsValue(username)) {
-             return false; // User already logged in
+             return LoginStatus.ALREADY_LOGGED_IN;
         }
 
         // 3. שליפת הסיסמה מה-SQL
         String query = "SELECT password FROM users WHERE username='" + username + "'";
         String result = executeSQL(query);
 
-        if (result.startsWith("ERROR")) return false;
+        if (result.startsWith("ERROR")) {
+            // במקרה של שגיאת תקשורת נחמיר ונגיד שהסיסמה שגויה (או נטפל אחרת)
+            return LoginStatus.WRONG_PASSWORD; 
+        }
 
         if (result.isEmpty()) {
             // --- משתמש חדש (Registration) ---
             String insertUser = "INSERT INTO users (username, password) VALUES ('" + username + "', '" + password + "')";
             executeSQL(insertUser);
+            
+            // רישום כניסה
+            String logLogin = "INSERT INTO logins (username) VALUES ('" + username + "')";
+            executeSQL(logLogin);
+
+            connectionsIdMap.put(connectionId, username);
+            return LoginStatus.ADDED_NEW_USER; // סטטוס מיוחד למשתמש חדש
         } else {
             // --- משתמש קיים (Login) ---
-            String storedPass = result.trim(); // ניקוי רווחים/ירידות שורה
+            String storedPass = result.trim();
             if (!storedPass.equals(password)) {
-                return false; // Wrong password
+                return LoginStatus.WRONG_PASSWORD;
             }
+            
+            // רישום כניסה
+            String logLogin = "INSERT INTO logins (username) VALUES ('" + username + "')";
+            executeSQL(logLogin);
+
+            connectionsIdMap.put(connectionId, username);
+            return LoginStatus.LOGGED_IN_SUCCESSFULLY;
         }
-
-        // 4. רישום מוצלח - עדכון ב-SQL ובזיכרון המקומי
-        String logLogin = "INSERT INTO logins (username) VALUES ('" + username + "')";
-        executeSQL(logLogin);
-
-        connectionsIdMap.put(connectionId, username);
-        return true;
     }
 
     /**
@@ -111,37 +119,27 @@ public class Database {
         }
     }
 
-    /**
-     * תיעוד העלאת קובץ
-     */
     public void trackFileUpload(String username, String filename) {
         if (filename == null || filename.isEmpty()) return;
-        
         String sql = "INSERT INTO files (username, filename) VALUES ('" + username + "', '" + filename + "')";
         executeSQL(sql);
     }
 
-    /**
-     * הדפסת הדו"ח (מותאם לפורמט של שרת הפייתון שיצרנו)
-     */
     public void printReport() {
         System.out.println("================================================================");
         System.out.println("SERVER REPORT - Generated at: " + java.time.LocalDateTime.now());
         System.out.println("================================================================");
         
-        // 1. משתמשים
         System.out.println("\n1. REGISTERED USERS:");
         System.out.println("----------------------------------------------------------------");
         String usersRes = executeSQL("SELECT username, password FROM users"); 
         printFormattedResult(usersRes, "User");
         
-        // 2. היסטוריית התחברויות
         System.out.println("\n2. LOGIN HISTORY:");
         System.out.println("----------------------------------------------------------------");
         String loginRes = executeSQL("SELECT username, login_time, logout_time FROM logins");
         printFormattedResult(loginRes, "User", "Login", "Logout");
         
-        // 3. קבצים
         System.out.println("\n3. FILE UPLOADS:");
         System.out.println("----------------------------------------------------------------");
         String filesRes = executeSQL("SELECT username, filename, upload_time FROM files");
@@ -150,7 +148,6 @@ public class Database {
         System.out.println("================================================================");
     }
 
-    // פונקציית עזר לפרסור התשובה מהפייתון (Pipe separated)
     private void printFormattedResult(String rawResult, String... labels) {
         if (rawResult == null || rawResult.isEmpty() || rawResult.startsWith("ERROR")) {
             System.out.println("   (No data found)");
@@ -159,12 +156,11 @@ public class Database {
 
         String[] rows = rawResult.split("\n");
         for (String row : rows) {
-            String[] cols = row.split("\\|"); // פיצול לפי |
+            String[] cols = row.split("\\|");
             System.out.print("   ");
             for (int i = 0; i < cols.length && i < labels.length; i++) {
                 System.out.print(labels[i] + ": " + cols[i] + "\t");
             }
-            // אם יש יותר עמודות מתוויות (למשל במקרה של לוגין)
             for (int i = labels.length; i < cols.length; i++) {
                  System.out.print(cols[i] + "\t");
             }
