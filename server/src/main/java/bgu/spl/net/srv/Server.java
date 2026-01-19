@@ -47,8 +47,7 @@ public interface Server<T> extends Closeable {
             int nthreads,
             int port,
             Supplier<MessagingProtocol<T>> protocolFactory,
-            Supplier<MessageEncoderDecoder<T>> encoderDecoderFactory,
-            Connections<T> connections) {
+            Supplier<MessageEncoderDecoder<T>> encoderDecoderFactory) {
         return new Reactor<T>(nthreads, port, protocolFactory, encoderDecoderFactory);
     }
 

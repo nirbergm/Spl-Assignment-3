@@ -22,10 +22,10 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         this.connections = connections;
     }
 
-    public void process(String message) {
+    public String process(String message) {
         String[] lines = message.split("\n");
         if (lines.length == 0) {
-            return;
+            return null;
         }
         String command = lines[0];
         switch (command) {
@@ -47,6 +47,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             default:
                 System.out.println("Error: Unknown command " + command);
         }
+        return null;
     }
 
     private String getHeaderValue(String[] lines, String headerName) {
