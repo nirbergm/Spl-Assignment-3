@@ -6,7 +6,7 @@ all: EchoClient
 EchoClient: bin/ConnectionHandler.o bin/echoClient.o
 	g++ -o bin/EchoClient bin/ConnectionHandler.o bin/echoClient.o $(LDFLAGS)
 
-StompWCIClient: bin/ConnectionHandler.o bin/StompClient.obin/event.o
+StompWCIClient: bin/ConnectionHandler.o bin/StompClient.o bin/event.o
 	g++ -o bin/StompWCIClient bin/ConnectionHandler.o bin/StompClient.o $(LDFLAGS)
 
 bin/ConnectionHandler.o: src/ConnectionHandler.cpp
@@ -20,6 +20,9 @@ bin/event.o: src/event.cpp
 
 bin/StompClient.o: src/StompClient.cpp
 	g++ $(CFLAGS) -o bin/StompClient.o src/StompClient.cpp
+
+bin/StompProtocol.o: src/StompProtocol.cpp
+	g++ $(CFLAGS) -o bin/StompProtocol.o src/StompProtocol.cpp
 
 .PHONY: clean
 clean:
