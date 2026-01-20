@@ -10,13 +10,10 @@
 
 using namespace std;
 
-// --- תחילת מחלקת StompProtocol ---
-
 class StompProtocol {
 private:
     int subscriptionIdCounter;
     int receiptIdCounter;
-    
     std::map<std::string, int> topicToSubId; 
     std::map<int, std::string> receiptIdToAction;
 
@@ -32,8 +29,13 @@ private:
         return "UNSUBSCRIBE\nid:" + to_string(id) + "\nreceipt:" + to_string(receipt) + "\n\n";
     }
 
-    string createSendFrame(const string& topic, const string& body) {
-        return "SEND\ndestination:" + topic + "\n\n" + body + "\n";
+    string createSendFrame(const string& topic, const string& body, const string& filename = "") {
+        string frame = "SEND\ndestination:" + topic + "\n";
+        if (!filename.empty()) {
+            frame += "file:" + filename + "\n";
+        }
+        frame += "\n" + body + "\n";
+        return frame;
     }
 
     string createDisconnectFrame(int receipt) {
@@ -43,7 +45,7 @@ private:
 public:
     StompProtocol() : subscriptionIdCounter(0), receiptIdCounter(0), topicToSubId(), receiptIdToAction() {}
 
-    vector<string> processFromKeyboard(const std::string& input, ConnectionHandler* connectionHandler, bool isConnected) {
+    vector<string> processFromKeyboard(const std::string& input) {
         vector<string> framesToSend;
         stringstream ss(input);
         string command;
@@ -89,9 +91,10 @@ public:
             string file_path;
             ss >> file_path;
             names_and_events data = parseEventsFile(file_path);
-            for (const Event& event : data.events) {
-                string game_name = data.team_a_name + "_" + data.team_b_name;
-                if (topicToSubId.count(game_name)) {
+            string game_name = data.team_a_name + "_" + data.team_b_name;
+
+            if (topicToSubId.count(game_name)) {
+                for (const Event& event : data.events) {
                     string body = "user:" + data.team_a_name + "\n" + 
                                   "team a:" + data.team_a_name + "\n" + 
                                   "team b:" + data.team_b_name + "\n" + 
@@ -99,7 +102,6 @@ public:
                                   "time:" + to_string(event.get_time()) + "\n" + 
                                   "general game updates:\n";
                     
-                    // --- התיקון ל-C++11 כאן ---
                     for (auto const& pair : event.get_game_updates()) {
                         body += pair.first + ":" + pair.second + "\n";
                     }
@@ -111,12 +113,11 @@ public:
                     for (auto const& pair : event.get_team_b_updates()) {
                         body += pair.first + ":" + pair.second + "\n";
                     }
-                    // ---------------------------
-
                     body += "description:\n" + event.get_discription();
-                    framesToSend.push_back(createSendFrame(game_name, body));
+                    
+                    framesToSend.push_back(createSendFrame(game_name, body, file_path));
                 }
-            }
+            } 
         }
         return framesToSend;
     }
@@ -131,12 +132,11 @@ public:
         }
         else if (command == "ERROR") {
             cout << frame << endl;
-            return false;
         }
         else if (command == "MESSAGE") {
-            size_t bodyPos = frame.find("\n\n");
-            if (bodyPos != string::npos) cout << frame.substr(bodyPos + 2) << endl;
-            else cout << frame << endl;
+             size_t bodyPos = frame.find("\n\n");
+             if (bodyPos != string::npos) cout << frame.substr(bodyPos + 2) << endl;
+             else cout << frame << endl;
         }
         else if (command == "RECEIPT") {
             size_t idPos = frame.find("receipt-id:");
@@ -148,7 +148,10 @@ public:
                     int id = stoi(idStr);
                     if (receiptIdToAction.count(id)) {
                         string action = receiptIdToAction[id];
-                        if (action == "DISCONNECT") return false;
+                        if (action == "DISCONNECT") {
+                            cout << "Disconnected." << endl;
+                            return false; 
+                        }
                         cout << action << endl;
                         receiptIdToAction.erase(id);
                     }
@@ -159,18 +162,20 @@ public:
     }
 };
 
-volatile bool shouldTerminate = false;
+volatile bool isConnected = false; 
 
 void socketListener(ConnectionHandler* handler, StompProtocol& protocol) {
-    while (!shouldTerminate) {
+    while (isConnected) {
         string answer;
         if (!handler->getFrameAscii(answer, '\0')) {
             cout << "Disconnected from server." << endl;
-            shouldTerminate = true;
+            isConnected = false;
             break;
         }
+        
         if (!protocol.processFromServer(answer)) {
-            shouldTerminate = true;
+            isConnected = false;
+            break;
         }
     }
 }
@@ -180,13 +185,11 @@ int main(int argc, char *argv[]) {
     thread* listenerThread = nullptr;
     StompProtocol protocol;
 
-    while (!shouldTerminate) {
-        const short bufsize = 1024;
-        char buf[bufsize];
-        if (!cin.getline(buf, bufsize)) {
-            shouldTerminate = true;
-            break;
-        }
+    const short bufsize = 1024;
+    char buf[bufsize];
+
+    while (true) {
+        cin.getline(buf, bufsize);
         string line(buf);
         if (line.empty()) continue;
 
@@ -196,9 +199,20 @@ int main(int argc, char *argv[]) {
 
         if (command == "login") {
             if (connectionHandler != nullptr) {
-                cout << "The client is already logged in, log out before trying again" << endl;
-                continue;
+                if (isConnected) {
+                    cout << "The client is already logged in, log out before trying again" << endl;
+                    continue;
+                } else {
+                    if (listenerThread && listenerThread->joinable()) {
+                        listenerThread->join();
+                        delete listenerThread;
+                        listenerThread = nullptr;
+                    }
+                    delete connectionHandler;
+                    connectionHandler = nullptr;
+                }
             }
+
             string hostPort;
             ss >> hostPort;
             size_t colonPos = hostPort.find(':');
@@ -216,24 +230,32 @@ int main(int argc, char *argv[]) {
                 connectionHandler = nullptr;
                 continue;
             }
+
+            isConnected = true;
             listenerThread = new thread(socketListener, connectionHandler, ref(protocol));
         }
+        
+        if (command == "quit") {
+             break; 
+        }
 
-        vector<string> frames = protocol.processFromKeyboard(line, connectionHandler, connectionHandler != nullptr);
-
+        vector<string> frames = protocol.processFromKeyboard(line);
         for (const string& frame : frames) {
-            if (connectionHandler != nullptr) {
+            if (connectionHandler != nullptr && isConnected) {
                 if (!connectionHandler->sendFrameAscii(frame, '\0')) {
                     cout << "Error sending message to server." << endl;
-                    shouldTerminate = true;
+                    isConnected = false; 
                     break;
                 }
+            } else if (command != "login") {
+                 cout << "Not connected. Please login first." << endl;
             }
         }
     }
 
     if (connectionHandler != nullptr) {
         connectionHandler->close();
+        isConnected = false;
     }
     if (listenerThread != nullptr) {
         if (listenerThread->joinable()) listenerThread->join();

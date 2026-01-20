@@ -75,7 +75,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         LoginStatus status = db.login(connectionId, login, passcode);
         if (status == LoginStatus.LOGGED_IN_SUCCESSFULLY || status == LoginStatus.ADDED_NEW_USER) {
             this.currentUser = login;
-            connections.send(connectionId, "CONNECTED\nversion:1.2\n\n");
+            connections.send(connectionId, "CONNECTED\nversion:1.2\n\n\u0000");
         } else {
             String errorHeader = "Unknown Error";
             String errorBody = "Unknown Error";
@@ -97,6 +97,11 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     public void processSend(String message, String[] lines) {
         String destination = getHeaderValue(lines, "destination");
         String receipt = getHeaderValue(lines, "receipt");
+        String filename = getHeaderValue(lines, "file"); // נסה לקרוא את שם הקובץ
+        if (filename != null) {
+            // אם יש שם קובץ, תעד אותו ב-DB
+            Database.getInstance().trackFileUpload(currentUser, filename, destination);
+        }
         if (currentUser == null) {
             sendError("User not logged in", "You must perform login before sending messages.", receipt);
             return; 
@@ -116,13 +121,13 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
         String messageFrame = "MESSAGE\n" +
-                              "destination:" + destination + "\n" +
-                              "message-id:" + msgId + "\n" + 
-                              "\n" +
-                              body;
+                          "destination:" + destination + "\n" +
+                          "message-id:" + msgId + "\n" + 
+                          "\n" +
+                          body;
         connections.send(destination, messageFrame);
         if (receipt != null) {
-            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+           connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
         }
     }
 
@@ -152,7 +157,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         activeSubscriptions.put(subscriptionId, destination);
         connections.subscribe(destination, connectionId, subscriptionId);
         if (receipt != null) {
-            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+           connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
         }
     }
 
@@ -181,7 +186,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         }
         connections.unsubscribe(channel, connectionId);
         if (receipt != null) {
-            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+           connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
         }
 
     }
@@ -204,7 +209,6 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         activeSubscriptions.clear();
         connections.send(connectionId, "RECEIPT\nreceipt-id:" + receiptId + "\n\n");
         shouldTerminate = true; 
-        connections.disconnect(connectionId);
     }
 
     public boolean shouldTerminate() {
@@ -219,7 +223,6 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         errorFrame += "message:" + messageHeader + "\n\n" + errorBody;
         shouldTerminate = true;
         connections.send(connectionId, errorFrame);
-        connections.disconnect(connectionId);
 
     }
 }

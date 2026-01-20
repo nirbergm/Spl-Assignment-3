@@ -7,17 +7,13 @@ import java.net.Socket;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Database {
-    // מפה שמחזיקה רק את המשתמשים המחוברים כרגע (Active Sessions)
-    private final ConcurrentHashMap<Integer, String> connectionsIdMap;
-    
+    private final ConcurrentHashMap<String, User> userMap;
+    private final ConcurrentHashMap<Integer, User> connectionsIdMap;
     private final String sqlHost;
     private final int sqlPort;
 
-    private static class Instance {
-        static final Database instance = new Database();
-    }
-
     private Database() {
+        userMap = new ConcurrentHashMap<>();
         connectionsIdMap = new ConcurrentHashMap<>();
         this.sqlHost = "127.0.0.1";
         this.sqlPort = 7778;
@@ -27,15 +23,16 @@ public class Database {
         return Instance.instance;
     }
 
-    /**
-     * פונקציית העזר לתקשורת מול הפייתון
-     */
+    private static class Instance {
+        static Database instance = new Database();
+    }
+
     private synchronized String executeSQL(String sql) {
         try (Socket socket = new Socket(sqlHost, sqlPort);
              PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
              BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
             
-            out.print(sql + "\0"); // שליחה עם Null Terminated
+            out.print(sql + "\0");
             out.flush();
             
             StringBuilder response = new StringBuilder();
@@ -47,124 +44,118 @@ public class Database {
             return response.toString();
             
         } catch (Exception e) {
-            System.err.println("SQL Error: " + e.getMessage());
             return "ERROR";
         }
     }
 
-    /**
-     * בדיקת לוגין מלאה מול ה-SQL עם החזרת LoginStatus
-     */
+    private String escapeSql(String str) {
+        if (str == null) return "";
+        return str.replace("'", "''");
+    }
+
     public LoginStatus login(int connectionId, String username, String password) {
-        // 1. בדיקה אם הלקוח הספציפי הזה (Connection Handler) כבר מחובר
         if (connectionsIdMap.containsKey(connectionId)) {
             return LoginStatus.CLIENT_ALREADY_CONNECTED;
         }
 
-        // 2. בדיקה אם המשתמש כבר מחובר ממקום אחר (למניעת כניסה כפולה)
-        if (connectionsIdMap.containsValue(username)) {
-             return LoginStatus.ALREADY_LOGGED_IN;
-        }
-
-        // 3. שליפת הסיסמה מה-SQL
         String query = "SELECT password FROM users WHERE username='" + username + "'";
         String result = executeSQL(query);
 
-        if (result.startsWith("ERROR")) {
-            // במקרה של שגיאת תקשורת נחמיר ונגיד שהסיסמה שגויה (או נטפל אחרת)
-            return LoginStatus.WRONG_PASSWORD; 
-        }
+        if (result.startsWith("ERROR")) return LoginStatus.WRONG_PASSWORD;
 
         if (result.isEmpty()) {
-            // --- משתמש חדש (Registration) ---
-            String insertUser = "INSERT INTO users (username, password) VALUES ('" + username + "', '" + password + "')";
-            executeSQL(insertUser);
+            User newUser = new User(connectionId, username, password);
+            String insert = String.format("INSERT INTO users (username, password, registration_date) VALUES ('%s', '%s', datetime('now'))", 
+                            escapeSql(username), escapeSql(password));
+            executeSQL(insert);
             
-            // רישום כניסה
-            String logLogin = "INSERT INTO logins (username) VALUES ('" + username + "')";
-            executeSQL(logLogin);
-
-            connectionsIdMap.put(connectionId, username);
-            return LoginStatus.ADDED_NEW_USER; // סטטוס מיוחד למשתמש חדש
+            userMap.put(username, newUser);
+            newUser.login();
+            connectionsIdMap.put(connectionId, newUser);
+            
+            logLogin(username);
+            return LoginStatus.ADDED_NEW_USER;
         } else {
-            // --- משתמש קיים (Login) ---
             String storedPass = result.trim();
             if (!storedPass.equals(password)) {
                 return LoginStatus.WRONG_PASSWORD;
             }
-            
-            // רישום כניסה
-            String logLogin = "INSERT INTO logins (username) VALUES ('" + username + "')";
-            executeSQL(logLogin);
 
-            connectionsIdMap.put(connectionId, username);
-            return LoginStatus.LOGGED_IN_SUCCESSFULLY;
+            userMap.putIfAbsent(username, new User(connectionId, username, password));
+            User user = userMap.get(username);
+
+            synchronized (user) {
+                if (user.isLoggedIn()) {
+                    return LoginStatus.ALREADY_LOGGED_IN;
+                }
+                user.login();
+                user.setConnectionId(connectionId);
+                connectionsIdMap.put(connectionId, user);
+                
+                logLogin(username);
+                return LoginStatus.LOGGED_IN_SUCCESSFULLY;
+            }
         }
     }
 
-    /**
-     * ניתוק משתמש
-     */
+    private void logLogin(String username) {
+        executeSQL("INSERT INTO logins (username) VALUES ('" + escapeSql(username) + "')");
+    }
+
     public void logout(int connectionId) {
-        if (connectionsIdMap.containsKey(connectionId)) {
-            String username = connectionsIdMap.get(connectionId);
-            
-            // עדכון זמן יציאה ב-SQL
-            String sql = "UPDATE logins SET logout_time=CURRENT_TIMESTAMP " +
-                         "WHERE username='" + username + "' AND logout_time IS NULL";
+        User user = connectionsIdMap.get(connectionId);
+        if (user != null) {
+            String sql = "UPDATE logins SET logout_time=CURRENT_TIMESTAMP WHERE username='" + user.name + "' AND logout_time IS NULL";
             executeSQL(sql);
             
-            // מחיקה מהזיכרון המקומי
+            user.logout();
             connectionsIdMap.remove(connectionId);
         }
     }
 
-    public void trackFileUpload(String username, String filename) {
-        if (filename == null || filename.isEmpty()) return;
-        String sql = "INSERT INTO files (username, filename) VALUES ('" + username + "', '" + filename + "')";
+    public void trackFileUpload(String username, String filename, String gameChannel) {
+        if (filename == null) return;
+        String sql = String.format("INSERT INTO files (username, filename, upload_time) VALUES ('%s', '%s', datetime('now'))",
+                escapeSql(username), escapeSql(filename));
         executeSQL(sql);
     }
 
     public void printReport() {
-        System.out.println("================================================================");
+        System.out.println(repeat("=", 80));
         System.out.println("SERVER REPORT - Generated at: " + java.time.LocalDateTime.now());
-        System.out.println("================================================================");
         
         System.out.println("\n1. REGISTERED USERS:");
-        System.out.println("----------------------------------------------------------------");
-        String usersRes = executeSQL("SELECT username, password FROM users"); 
-        printFormattedResult(usersRes, "User");
-        
+        printSimpleResult(executeSQL("SELECT username, registration_date FROM users"), "User", "Date");
+
         System.out.println("\n2. LOGIN HISTORY:");
-        System.out.println("----------------------------------------------------------------");
-        String loginRes = executeSQL("SELECT username, login_time, logout_time FROM logins");
-        printFormattedResult(loginRes, "User", "Login", "Logout");
-        
+        printSimpleResult(executeSQL("SELECT username, login_time, logout_time FROM logins"), "User", "Login", "Logout");
+
         System.out.println("\n3. FILE UPLOADS:");
-        System.out.println("----------------------------------------------------------------");
-        String filesRes = executeSQL("SELECT username, filename, upload_time FROM files");
-        printFormattedResult(filesRes, "User", "File", "Time");
+        printSimpleResult(executeSQL("SELECT username, filename, upload_time FROM files"), "User", "File", "Time");
         
-        System.out.println("================================================================");
+        System.out.println(repeat("=", 80));
     }
 
-    private void printFormattedResult(String rawResult, String... labels) {
+    private void printSimpleResult(String rawResult, String... labels) {
         if (rawResult == null || rawResult.isEmpty() || rawResult.startsWith("ERROR")) {
             System.out.println("   (No data found)");
             return;
         }
-
         String[] rows = rawResult.split("\n");
         for (String row : rows) {
             String[] cols = row.split("\\|");
             System.out.print("   ");
-            for (int i = 0; i < cols.length && i < labels.length; i++) {
-                System.out.print(labels[i] + ": " + cols[i] + "\t");
-            }
-            for (int i = labels.length; i < cols.length; i++) {
-                 System.out.print(cols[i] + "\t");
+            for (int i = 0; i < cols.length; i++) {
+                String label = (i < labels.length) ? labels[i] : "Info";
+                System.out.print(label + ": " + cols[i] + "\t");
             }
             System.out.println();
         }
+    }
+
+    private String repeat(String str, int times) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < times; i++) { sb.append(str); }
+        return sb.toString();
     }
 }
